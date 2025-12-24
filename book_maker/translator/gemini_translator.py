@@ -39,12 +39,8 @@ GEMINIPRO_MODEL_LIST = [
 ]
 
 GEMINIFLASH_MODEL_LIST = [
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-latest",
-    "gemini-1.5-flash-001",
-    "gemini-1.5-flash-002",
-    "gemini-2.0-flash-exp",
-    "gemini-2.5-flash-preview-04-17",
+    "gemini-2.5-flash",
+    "gemini-3-flash",
 ]
 
 
@@ -53,7 +49,17 @@ class Gemini(Base):
     Google gemini translator
     """
 
-    DEFAULT_PROMPT = "Please help me to translate,`{text}` to {language}, please return only translated content not include the origin text"
+    DEFAULT_PROMPT = """You are a professional translator. Your task is to translate the following text into {language}.
+
+CRITICAL RULES:
+1. **PRESERVE ALL HTML TAGS**: You MUST keep all HTML tags (like <a>, <b>, <span>, <i>, etc.) and their attributes (like href, class, id) EXACTLY as they are in the source.
+2. **DO NOT STRIP TAGS**: Do not remove any tags, even if they seem unnecessary.
+3. **TRANSLATE CONTENT ONLY**: Only translate the text nodes inside or between the tags.
+4. **NO EXPLANATIONS**: Return ONLY the translated HTML content. Do not add any preamble, conversational filler, or explanations.
+5. **MATCH STRUCTURE**: The output HTML structure must be identical to the input HTML structure.
+
+TEXT TO TRANSLATE:
+{text}"""
 
     def __init__(
         self,
