@@ -67,7 +67,12 @@ O3MINI_MODEL_LIST = [
 
 
 class ChatGPTAPI(Base):
-    DEFAULT_PROMPT = "Please help me to translate,`{text}` to {language}, please return only translated content not include the origin text"
+    DEFAULT_PROMPT = """Please help me to translate the following text to {language}. 
+If there are HTML tags in the text (such as <a>, <b>, <span>, etc.), please keep the tags and their attributes EXACTLY as they are in the original text, and only translate the visible text content. 
+Return only the translated content and do not include the original text or any explanations.
+
+Text:
+{text}"""
 
     def __init__(
         self,
@@ -312,7 +317,7 @@ class ChatGPTAPI(Base):
             temp_p = copy(p)
             for sup in temp_p.find_all("sup"):
                 sup.extract()
-            para_text = temp_p.get_text().strip()
+            para_text = temp_p.decode_contents() if temp_p.contents else temp_p.get_text().strip()
             # Using special delimiters and clear numbering
             formatted_text += f"PARAGRAPH {i}:\n{para_text}\n\n"
 
