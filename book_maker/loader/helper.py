@@ -24,10 +24,56 @@ class EPUBBookLoaderHelper:
             and p.string.replace(" ", "").strip() == text.replace(" ", "").strip()
         ):
             return
-        new_p = copy(p)
-        new_p.string = text
+
+        from bs4 import NavigableString, BeautifulSoup as bs, Tag
+        
+        # Helper to safely copy a node to avoid parentage issues
+        def safe_copy_node(node):
+            if isinstance(node, Tag):
+                return copy(node)
+            return NavigableString(str(node))
+
+        if isinstance(p, NavigableString):
+            if "<" in text and ">" in text:
+                temp_soup = bs(f"<body>{text}</body>", "html.parser")
+                body = temp_soup.find("body") or temp_soup
+                current = p
+                for child in list(body.contents):
+                    new_node = safe_copy_node(child)
+                    current.insert_after(new_node)
+                    current = new_node
+            else:
+                new_p = NavigableString(text)
+                p.insert_after(new_p)
+            
+            if single_translate:
+                p.extract()
+            return
+
+        # For Tag elements (p, div, etc.), we construct a full HTML string and parse it.
+        # This is the most robust way to ensure all nodes are correctly interleaved and adopted.
+        if "<" in text and ">" in text:
+            attrs_str = ""
+            for k, v in p.attrs.items():
+                val = " ".join(v) if isinstance(v, list) else str(v)
+                # Escape double quotes in attribute values
+                val = val.replace('"', '&quot;')
+                attrs_str += f' {k}="{val}"'
+            
+            html = f"<{p.name}{attrs_str}>{text}</{p.name}>"
+            fragment_soup = bs(html, "html.parser")
+            new_p = fragment_soup.find(p.name)
+            if not new_p:
+                # Fallback if find fails
+                new_p = copy(p)
+                new_p.string = text
+        else:
+            new_p = copy(p)
+            new_p.string = text
+            
         if translation_style != "":
             new_p["style"] = translation_style
+            
         p.insert_after(new_p)
         if single_translate:
             p.extract()
@@ -44,9 +90,10 @@ class EPUBBookLoaderHelper:
 
     def deal_new(self, p, wait_p_list, single_translate=False):
         self.deal_old(wait_p_list, single_translate, self.context_flag)
+        p_text = p.decode_contents() if hasattr(p, "contents") and p.contents else p.text
         self.insert_trans(
             p,
-            shorter_result_link(self.translate_with_backoff(p.text, self.context_flag)),
+            shorter_result_link(self.translate_with_backoff(p_text, self.context_flag)),
             self.translation_style,
             single_translate,
         )
