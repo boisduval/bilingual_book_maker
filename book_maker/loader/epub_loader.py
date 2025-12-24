@@ -55,7 +55,7 @@ class EPUBBookLoader(BaseBookLoader):
         )
         self.is_test = is_test
         self.test_num = test_num
-        self.translate_tags = "p"
+        self.translate_tags = "p,h1,h2,h3,h4,h5,h6"
         self.exclude_translate_tags = "sup"
         self.exclude_translate_selectors = ""
         self.allow_navigable_strings = False
@@ -202,6 +202,12 @@ class EPUBBookLoader(BaseBookLoader):
         ):
             return False, p_text, new_p
             
+        if p.get("class"):
+            for cls in p.get("class"):
+                if cls.startswith("toc-heading-"):
+                    # TODO: special handling for toc-heading-*
+                    return False, p_text, new_p
+
         return True, p_text, new_p
 
     def _extract_paragraph(self, p):

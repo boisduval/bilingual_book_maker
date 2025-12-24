@@ -278,7 +278,7 @@ def main():
         "--translate-tags",
         dest="translate_tags",
         type=str,
-        default="p",
+        default="p,h1,h2,h3,h4,h5,h6",
         help="example --translate-tags p,blockquote",
     )
     parser.add_argument(
