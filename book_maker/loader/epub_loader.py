@@ -4,7 +4,7 @@ import string
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from copy import copy
+from copy import copy, deepcopy
 from pathlib import Path
 import traceback
 from threading import Lock
@@ -57,6 +57,7 @@ class EPUBBookLoader(BaseBookLoader):
         self.test_num = test_num
         self.translate_tags = "p"
         self.exclude_translate_tags = "sup"
+        self.exclude_translate_selectors = ""
         self.allow_navigable_strings = False
         self.accumulated_num = 1
         self.translation_style = ""
@@ -183,12 +184,35 @@ class EPUBBookLoader(BaseBookLoader):
         new_book.toc = book.toc
         return new_book
 
+    def _is_p_translatable(self, p):
+        if not p:
+            return False, "", None
+            
+        new_p = self._extract_paragraph(deepcopy(p))
+        p_text = (
+            new_p.decode_contents() if hasattr(new_p, "contents") and new_p.contents else new_p.text
+        )
+        
+        if any(
+            [
+                not new_p.get_text().strip(),
+                self._is_special_text(p_text),
+                not_trans(p_text),
+            ]
+        ):
+            return False, p_text, new_p
+            
+        return True, p_text, new_p
+
     def _extract_paragraph(self, p):
+        if type(p) is NavigableString:
+            return p
         for p_exclude in self.exclude_translate_tags.split(","):
-            # for issue #280
-            if type(p) is NavigableString:
-                continue
-            for pt in p.find_all(p_exclude):
+            if p_exclude:
+                for pt in p.find_all(p_exclude):
+                    pt.extract()
+        if self.exclude_translate_selectors:
+            for pt in p.select(self.exclude_translate_selectors):
                 pt.extract()
         return p
 
@@ -285,19 +309,9 @@ class EPUBBookLoader(BaseBookLoader):
         for i in range(len(p_list)):
             p = p_list[i]
             print(f"translating {i}/{len(p_list)}")
-            temp_p = copy(p)
-
-            for p_exclude in self.exclude_translate_tags.split(","):
-                # for issue #280
-                if type(p) is NavigableString:
-                    continue
-                for pt in temp_p.find_all(p_exclude):
-                    pt.extract()
-
-            p_text = temp_p.decode_contents() if temp_p.contents else temp_p.text
-            if any(
-                [not p.text, self._is_special_text(p_text), not_trans(p_text)]
-            ):
+            
+            is_trans, p_text, temp_p = self._is_p_translatable(p)
+            if not is_trans:
                 if i == len(p_list) - 1:
                     self.helper.deal_old(wait_p_list, self.single_translate)
                 continue
@@ -472,6 +486,10 @@ class EPUBBookLoader(BaseBookLoader):
         content = item.content
         soup = bs(content, "html.parser")
         p_list = soup.findAll(trans_taglist)
+        if self.exclude_translate_selectors:
+            # Filter p_list by CSS selectors
+            excluded_elements = soup.select(self.exclude_translate_selectors)
+            p_list = [p for p in p_list if p not in excluded_elements]
 
         p_list = self.filter_nest_list(p_list, trans_taglist)
 
@@ -509,11 +527,12 @@ class EPUBBookLoader(BaseBookLoader):
             for p in p_list:
                 if is_test_done:
                     break
-                if not p.text or self._is_special_text(p.text):
+                
+                is_trans, p_text, new_p = self._is_p_translatable(p)
+                if not is_trans:
                     pbar.update(1)
                     continue
 
-                new_p = self._extract_paragraph(copy(p))
                 if self.single_translate and self.block_size > 0:
                     p_len = num_tokens_from_text(new_p.text)
                     block_len += p_len
@@ -588,6 +607,9 @@ class EPUBBookLoader(BaseBookLoader):
             content = item.content
             soup = bs(content, "html.parser")
             p_list = soup.findAll(trans_taglist)
+            if self.exclude_translate_selectors:
+                excluded_elements = soup.select(self.exclude_translate_selectors)
+                p_list = [p for p in p_list if p not in excluded_elements]
             p_list = self.filter_nest_list(p_list, trans_taglist)
 
             if self.allow_navigable_strings:
@@ -611,18 +633,15 @@ class EPUBBookLoader(BaseBookLoader):
             else:
                 # Process paragraphs individually for this chapter
                 for p in p_list:
-                    if not p.text or self._is_special_text(p.text):
+                    is_trans, p_text, new_p = self._is_p_translatable(p)
+                    if not is_trans:
                         continue
-
-                    new_p = self._extract_paragraph(copy(p))
+                        
                     index = self._get_next_translation_index()
 
                     if self.resume and index < p_to_save_len:
                         t_text = self.p_to_save[index]
                     else:
-                        p_text = (
-                            new_p.decode_contents() if new_p.contents else new_p.text
-                        )
                         # Use chapter-specific context for translation
                         t_text = self._translate_with_chapter_context(
                             thread_translator,
@@ -785,18 +804,9 @@ class EPUBBookLoader(BaseBookLoader):
 
         for i in range(len(p_list)):
             p = p_list[i]
-            temp_p = copy(p)
-
-            for p_exclude in self.exclude_translate_tags.split(","):
-                if type(p) == NavigableString:
-                    continue
-                for pt in temp_p.find_all(p_exclude):
-                    pt.extract()
-
-            p_text = temp_p.decode_contents() if temp_p.contents else temp_p.text
-            if any(
-                [not p.text, self.parent_loader._is_special_text(p_text), not_trans(p_text)]
-            ):
+            
+            is_trans, p_text, temp_p = self.parent_loader._is_p_translatable(p)
+            if not is_trans:
                 if i == len(p_list) - 1:
                     chapter_helper.deal_old(wait_p_list, self.single_translate)
                 continue
@@ -845,36 +855,29 @@ class EPUBBookLoader(BaseBookLoader):
         new_book = self._make_new_book(self.origin_book)
         all_items = list(self.origin_book.get_items())
         trans_taglist = self.translate_tags.split(",")
-        all_p_length = sum(
-            (
-                0
-                if (
-                    (i.get_type() != ITEM_DOCUMENT)
-                    or (i.file_name in self.exclude_filelist.split(","))
-                    or (
-                        self.only_filelist
-                        and i.file_name not in self.only_filelist.split(",")
-                    )
+        all_p_length = 0
+        for i in all_items:
+            if (
+                (i.get_type() != ITEM_DOCUMENT)
+                or (i.file_name in self.exclude_filelist.split(","))
+                or (
+                    self.only_filelist
+                    and i.file_name not in self.only_filelist.split(",")
                 )
-                else len(bs(i.content, "html.parser").findAll(trans_taglist))
-            )
-            for i in all_items
-        )
-        all_p_length += self.allow_navigable_strings * sum(
-            (
-                0
-                if (
-                    (i.get_type() != ITEM_DOCUMENT)
-                    or (i.file_name in self.exclude_filelist.split(","))
-                    or (
-                        self.only_filelist
-                        and i.file_name not in self.only_filelist.split(",")
-                    )
-                )
-                else len(bs(i.content, "html.parser").findAll(text=True))
-            )
-            for i in all_items
-        )
+            ):
+                continue
+            
+            soup = bs(i.content, "html.parser")
+            p_list = soup.findAll(trans_taglist)
+            p_list = self.filter_nest_list(p_list, trans_taglist)
+            
+            for p in p_list:
+                is_trans, _, _ = self._is_p_translatable(p)
+                if is_trans:
+                    all_p_length += 1
+            
+            if self.allow_navigable_strings:
+                all_p_length += len(soup.findAll(text=True))
         pbar = tqdm(total=self.test_num) if self.is_test else tqdm(total=all_p_length)
         print()
         index = 0
@@ -1005,11 +1008,17 @@ class EPUBBookLoader(BaseBookLoader):
                     content = item.content
                     soup = bs(content, "html.parser")
                     p_list = soup.findAll(trans_taglist)
+                    if self.exclude_translate_selectors:
+                        excluded_elements = soup.select(self.exclude_translate_selectors)
+                        p_list = [p for p in p_list if p not in excluded_elements]
+
                     if self.allow_navigable_strings:
                         p_list.extend(soup.findAll(text=True))
                     for p in p_list:
-                        if not p.text or self._is_special_text(p.text):
+                        is_trans, p_text, new_p = self._is_p_translatable(p)
+                        if not is_trans:
                             continue
+
                         # TODO banch of p to translate then combine
                         # PR welcome here
                         if index < p_to_save_len:

@@ -289,6 +289,13 @@ def main():
         help="example --exclude_translate-tags table,sup",
     )
     parser.add_argument(
+        "--exclude-translate-selectors",
+        dest="exclude_translate_selectors",
+        type=str,
+        default="",
+        help='example --exclude-translate-selectors ".blue,#skip-me"',
+    )
+    parser.add_argument(
         "--allow_navigable_strings",
         dest="allow_navigable_strings",
         action="store_true",
@@ -539,6 +546,8 @@ So you are close to reaching the limit. You have to choose your own value, there
         e.translate_tags = options.translate_tags
     if options.exclude_translate_tags:
         e.exclude_translate_tags = options.exclude_translate_tags
+    if options.exclude_translate_selectors:
+        e.exclude_translate_selectors = options.exclude_translate_selectors
     if options.exclude_filelist:
         e.exclude_filelist = options.exclude_filelist
     if options.only_filelist:
