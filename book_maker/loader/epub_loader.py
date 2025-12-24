@@ -194,28 +194,30 @@ class EPUBBookLoader(BaseBookLoader):
 
     def _process_paragraph(self, p, new_p, index, p_to_save_len, thread_safe=False):
         if self.resume and index < p_to_save_len:
-            p.string = self.p_to_save[index]
+            t_text = self.p_to_save[index]
+            # Removed p.string = t_text to avoid skipping insert_trans
         else:
-            t_text = ""
+            p_text = (
+                new_p.decode_contents() if new_p.contents else new_p.text
+            )
             if self.batch_flag:
-                self.translate_model.add_to_batch_translate_queue(index, new_p.text)
+                self.translate_model.add_to_batch_translate_queue(index, p_text)
             elif self.batch_use_flag:
                 t_text = self.translate_model.batch_translate(index)
             else:
-                t_text = self.translate_model.translate(new_p.text)
+                t_text = self.translate_model.translate(p_text)
             if t_text is None:
                 raise RuntimeError(
                     "`t_text` is None: your translation model is not working as expected. Please check your translation model configuration."
                 )
-            if type(p) is NavigableString:
-                new_p = t_text
-                self.p_to_save.append(new_p)
+            if isinstance(p, NavigableString):
+                # For NavigableString, we can't clear/append, so we handle it here or in insert_trans
+                self.p_to_save.append(t_text)
             else:
-                new_p.string = t_text
-                self.p_to_save.append(new_p.text)
+                self.p_to_save.append(t_text)
 
         self.helper.insert_trans(
-            p, new_p.string, self.translation_style, self.single_translate
+            p, t_text, self.translation_style, self.single_translate
         )
         index += 1
 
@@ -235,10 +237,15 @@ class EPUBBookLoader(BaseBookLoader):
 
         for p in p_block:
             if self.resume and index < p_to_save_len:
-                p.string = self.p_to_save[index]
+                p_text = (
+                    p.decode_contents().rstrip() if p.contents else p.text.rstrip()
+                )
+                # We skip re-translation and use p_to_save[index] via t later
             else:
-                p_text = p.text.rstrip()
-                text.append(p_text)
+                p_text = (
+                p.decode_contents().rstrip() if p.contents else p.text.rstrip()
+            )
+            text.append(p_text)
 
             if self.is_test and index >= self.test_num:
                 break
@@ -258,13 +265,11 @@ class EPUBBookLoader(BaseBookLoader):
                 else:
                     p = p_block[i]
 
-                if type(p) is NavigableString:
-                    p = t
-                else:
-                    p.string = t
+                if type(p) is not NavigableString:
+                    pass # We will use insert_trans below
 
                 self.helper.insert_trans(
-                    p, p.string, self.translation_style, self.single_translate
+                    p, t, self.translation_style, self.single_translate
                 )
 
         if thread_safe:
@@ -289,14 +294,17 @@ class EPUBBookLoader(BaseBookLoader):
                 for pt in temp_p.find_all(p_exclude):
                     pt.extract()
 
+            p_text = temp_p.decode_contents() if temp_p.contents else temp_p.text
             if any(
-                [not p.text, self._is_special_text(temp_p.text), not_trans(temp_p.text)]
+                [not p.text, self._is_special_text(p_text), not_trans(p_text)]
             ):
                 if i == len(p_list) - 1:
                     self.helper.deal_old(wait_p_list, self.single_translate)
                 continue
-            length = num_tokens_from_text(temp_p.text)
+            length = num_tokens_from_text(p_text)
             if length > send_num:
+                # We need a new way to deal with this if we want to support HTML in deal_new
+                # but deal_new currently uses p.text. Let's fix that too later if needed.
                 self.helper.deal_new(p, wait_p_list, self.single_translate)
                 continue
             if i == len(p_list) - 1:
@@ -612,10 +620,13 @@ class EPUBBookLoader(BaseBookLoader):
                     if self.resume and index < p_to_save_len:
                         t_text = self.p_to_save[index]
                     else:
+                        p_text = (
+                            new_p.decode_contents() if new_p.contents else new_p.text
+                        )
                         # Use chapter-specific context for translation
                         t_text = self._translate_with_chapter_context(
                             thread_translator,
-                            new_p.text,
+                            p_text,
                             chapter_context_list,
                             chapter_translated_list,
                         )
@@ -759,7 +770,8 @@ class EPUBBookLoader(BaseBookLoader):
 
             def deal_new(self, p, wait_p_list, single_translate):
                 self.deal_old(wait_p_list, single_translate)
-                translation = self.translate_with_context(p.text)
+                p_text = p.decode_contents() if p.contents else p.text
+                translation = self.translate_with_context(p_text)
                 self.parent_loader.helper.insert_trans(
                     p,
                     translation,
@@ -781,14 +793,15 @@ class EPUBBookLoader(BaseBookLoader):
                 for pt in temp_p.find_all(p_exclude):
                     pt.extract()
 
+            p_text = temp_p.decode_contents() if temp_p.contents else temp_p.text
             if any(
-                [not p.text, self._is_special_text(temp_p.text), not_trans(temp_p.text)]
+                [not p.text, self.parent_loader._is_special_text(p_text), not_trans(p_text)]
             ):
                 if i == len(p_list) - 1:
                     chapter_helper.deal_old(wait_p_list, self.single_translate)
                 continue
 
-            length = num_tokens_from_text(temp_p.text)
+            length = num_tokens_from_text(p_text)
             if length > send_num:
                 chapter_helper.deal_new(p, wait_p_list, self.single_translate)
                 continue
@@ -1000,14 +1013,10 @@ class EPUBBookLoader(BaseBookLoader):
                         # TODO banch of p to translate then combine
                         # PR welcome here
                         if index < p_to_save_len:
-                            new_p = copy(p)
-                            if type(p) is NavigableString:
-                                new_p = self.p_to_save[index]
-                            else:
-                                new_p.string = self.p_to_save[index]
+                            t_text = self.p_to_save[index]
                             self.helper.insert_trans(
                                 p,
-                                new_p.string,
+                                t_text,
                                 self.translation_style,
                                 self.single_translate,
                             )
