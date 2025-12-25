@@ -406,6 +406,13 @@ So you are close to reaching the limit. You have to choose your own value, there
         help="Request interval in seconds (e.g., 0.1 for 100ms). Currently only supported for Gemini models. Default: 0.01",
     )
     parser.add_argument(
+        "--batch-paragraphs",
+        dest="batch_paragraphs",
+        action="store_true",
+        help="translate paragraphs in batches (whole page/chapter) to reduce API calls and token usage",
+    )
+
+    parser.add_argument(
         "--parallel-workers",
         dest="parallel_workers",
         type=int,
@@ -552,6 +559,12 @@ So you are close to reaching the limit. You have to choose your own value, there
         e.exclude_filelist = options.exclude_filelist
     if options.only_filelist:
         e.only_filelist = options.only_filelist
+    
+    if options.batch_paragraphs and options.accumulated_num == 1:
+        # Default to a moderate number to batch pages but avoid context overflow
+        options.accumulated_num = 2000
+        print("Batch paragraphs enabled, setting accumulated_num to 2000")
+
     if options.accumulated_num > 1:
         e.accumulated_num = options.accumulated_num
     if options.translation_style:

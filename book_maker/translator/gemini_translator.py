@@ -44,7 +44,9 @@ GEMINIFLASH_MODEL_LIST = [
 ]
 
 
-class Gemini(Base):
+from .batch_strategy import BatchStrategy
+
+class Gemini(BatchStrategy, Base):
     """
     Google gemini translator
     """

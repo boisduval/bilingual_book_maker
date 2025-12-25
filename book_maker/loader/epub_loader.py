@@ -309,38 +309,69 @@ class EPUBBookLoader(BaseBookLoader):
             self._save_progress()
         return index
 
-    def translate_paragraphs_acc(self, p_list, send_num):
+    def translate_paragraphs_acc(self, p_list, send_num, start_index, p_to_save_len, pbar):
         count = 0
         wait_p_list = []
         for i in range(len(p_list)):
             p = p_list[i]
-            print(f"translating {i}/{len(p_list)}")
-            
             is_trans, p_text, temp_p = self._is_p_translatable(p)
             if not is_trans:
+                pbar.update(1)
                 if i == len(p_list) - 1:
-                    self.helper.deal_old(wait_p_list, self.single_translate)
+                    results = self.helper.deal_old(wait_p_list, self.single_translate)
+                    if results:
+                        self.p_to_save.extend(results)
                 continue
+
+            # Resume logic: skip if already translated
+            if self.resume and start_index < p_to_save_len:
+                t_text = self.p_to_save[start_index]
+                self.helper.insert_trans(p, t_text, self.translation_style, self.single_translate)
+                start_index += 1
+                pbar.update(1)
+                continue
+
+            print(f"translating {i}/{len(p_list)}")
+
+            start_index += 1
             length = num_tokens_from_text(p_text)
+            # Limit batch by number of paragraphs as well (e.g. max 30) to prevent LLM confusion
+            MAX_PARAGRAPHS_PER_BATCH = 30
+            
+            pbar.update(1)
+            
             if length > send_num:
-                # We need a new way to deal with this if we want to support HTML in deal_new
-                # but deal_new currently uses p.text. Let's fix that too later if needed.
-                self.helper.deal_new(p, wait_p_list, self.single_translate)
+                results = self.helper.deal_new(p, wait_p_list, self.single_translate)
+                if results:
+                    self.p_to_save.extend(results)
                 continue
+            
             if i == len(p_list) - 1:
-                if count + length < send_num:
+                if count + length < send_num and len(wait_p_list) < MAX_PARAGRAPHS_PER_BATCH:
                     wait_p_list.append(p)
-                    self.helper.deal_old(wait_p_list, self.single_translate)
+                    results = self.helper.deal_old(wait_p_list, self.single_translate)
+                    if results:
+                        self.p_to_save.extend(results)
                 else:
-                    self.helper.deal_new(p, wait_p_list, self.single_translate)
+                    results = self.helper.deal_old(wait_p_list, self.single_translate)
+                    if results:
+                        self.p_to_save.extend(results)
+                    results = self.helper.deal_new(p, wait_p_list, self.single_translate)
+                    if results:
+                        self.p_to_save.extend(results)
                 break
-            if count + length < send_num:
+            
+            if count + length < send_num and len(wait_p_list) < MAX_PARAGRAPHS_PER_BATCH:
                 count += length
                 wait_p_list.append(p)
             else:
-                self.helper.deal_old(wait_p_list, self.single_translate)
+                results = self.helper.deal_old(wait_p_list, self.single_translate)
+                if results:
+                    self.p_to_save.extend(results)
                 wait_p_list.append(p)
                 count = length
+        
+        return start_index
 
     def get_item(self, book, name):
         for item in book.get_items():
@@ -519,53 +550,68 @@ class EPUBBookLoader(BaseBookLoader):
             p_list.extend(soup.findAll(text=True))
 
         send_num = self.accumulated_num
-        if send_num > 1:
-            with open("log/buglog.txt", "a") as f:
-                print(f"------------- {item.file_name} -------------", file=f)
+        try:
+            if send_num > 1:
+                with open("log/buglog.txt", "a") as f:
+                    print(f"------------- {item.file_name} -------------", file=f)
 
-            print("------------------------------------------------------")
-            print(f"dealing {item.file_name} ...")
-            self.translate_paragraphs_acc(p_list, send_num)
-        else:
-            is_test_done = self.is_test and index > self.test_num
-            p_block = []
-            block_len = 0
-            for p in p_list:
-                if is_test_done:
-                    break
+                print("------------------------------------------------------")
+                print(f"dealing {item.file_name} ...")
                 
-                is_trans, p_text, new_p = self._is_p_translatable(p)
-                if not is_trans:
-                    pbar.update(1)
-                    continue
+                with self._progress_lock:
+                    start_index = self._translation_index
+                
+                new_index = self.translate_paragraphs_acc(p_list, send_num, start_index, p_to_save_len, pbar)
+                
+                with self._progress_lock:
+                    self._translation_index = new_index
+            else:
+                is_test_done = self.is_test and index > self.test_num
+                p_block = []
+                block_len = 0
+                for p in p_list:
+                    if is_test_done:
+                        break
+                    
+                    is_trans, p_text, new_p = self._is_p_translatable(p)
+                    if not is_trans:
+                        pbar.update(1)
+                        continue
 
-                if self.single_translate and self.block_size > 0:
-                    p_len = num_tokens_from_text(new_p.text)
-                    block_len += p_len
-                    if block_len > self.block_size:
-                        index = self._process_combined_paragraph(
-                            p_block, index, p_to_save_len, thread_safe=False
-                        )
-                        p_block = [p]
-                        block_len = p_len
-                        print()
+                    if self.single_translate and self.block_size > 0:
+                        p_len = num_tokens_from_text(new_p.text)
+                        block_len += p_len
+                        if block_len > self.block_size:
+                            index = self._process_combined_paragraph(
+                                p_block, index, p_to_save_len, thread_safe=False
+                            )
+                            p_block = [p]
+                            block_len = p_len
+                            print()
+                        else:
+                            p_block.append(p)
                     else:
-                        p_block.append(p)
-                else:
-                    index = self._process_paragraph(
-                        p, new_p, index, p_to_save_len, thread_safe=False
+                        index = self._process_paragraph(
+                            p, new_p, index, p_to_save_len, thread_safe=False
+                        )
+                        print()
+
+                    # pbar.update(delta) not pbar.update(index)?
+                    pbar.update(1)
+
+                    if self.is_test and index >= self.test_num:
+                        break
+                if self.single_translate and self.block_size > 0 and len(p_block) > 0:
+                    index = self._process_combined_paragraph(
+                        p_block, index, p_to_save_len, thread_safe=False
                     )
-                    print()
 
-                # pbar.update(delta) not pbar.update(index)?
-                pbar.update(1)
-
-                if self.is_test and index >= self.test_num:
-                    break
-            if self.single_translate and self.block_size > 0 and len(p_block) > 0:
-                index = self._process_combined_paragraph(
-                    p_block, index, p_to_save_len, thread_safe=False
-                )
+        except KeyboardInterrupt:
+            # If interrupted, strictly save current progress
+            if soup:
+                item.content = soup.encode(encoding="utf-8")
+            new_book.add_item(item)
+            raise
 
         if soup:
             item.content = soup.encode(encoding="utf-8")
@@ -985,10 +1031,19 @@ class EPUBBookLoader(BaseBookLoader):
                 pbar.close()
         except KeyboardInterrupt as e:
             print(e)
-            if self.accumulated_num == 1:
-                print("you can resume it next time")
+            print("\n⚠️ Interrupted by user. Saving progress...")
+            # For batch mode or sequential, we want to save the current state
+            try:
+                name, _ = os.path.splitext(self.epub_name)
+                # Check if we have a new_book object to save
+                if 'new_book' in locals():
+                    epub.write_epub(f"{name}_bilingual.epub", new_book, {})
+                    print(f"✅ Saved bilingual book to {name}_bilingual.epub")
+                
                 self._save_progress()
                 self._save_temp_book()
+            except Exception as save_e:
+                print(f"❌ Error saving progress: {save_e}")
             sys.exit(0)
         except Exception:
             traceback.print_exc()

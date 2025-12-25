@@ -5,7 +5,9 @@ from anthropic import Anthropic
 from .base_translator import Base
 
 
-class Claude(Base):
+from .batch_strategy import BatchStrategy
+
+class Claude(BatchStrategy, Base):
     def __init__(
         self,
         key,

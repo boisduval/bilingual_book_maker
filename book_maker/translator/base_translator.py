@@ -15,5 +15,8 @@ class Base(ABC):
     def translate(self, text):
         pass
 
+    def translate_list(self, text_list):
+        return [self.translate(text) for text in text_list]
+
     def set_deployment_id(self, deployment_id):
         pass

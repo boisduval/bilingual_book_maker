@@ -91,16 +91,18 @@ class EPUBBookLoaderHelper:
     def deal_new(self, p, wait_p_list, single_translate=False):
         self.deal_old(wait_p_list, single_translate, self.context_flag)
         p_text = p.decode_contents() if hasattr(p, "contents") and p.contents else p.text
+        translation = shorter_result_link(self.translate_with_backoff(p_text, self.context_flag))
         self.insert_trans(
             p,
-            shorter_result_link(self.translate_with_backoff(p_text, self.context_flag)),
+            translation,
             self.translation_style,
             single_translate,
         )
+        return [translation]
 
     def deal_old(self, wait_p_list, single_translate=False, context_flag=False):
         if not wait_p_list:
-            return
+            return []
 
         result_txt_list = self.translate_model.translate_list(wait_p_list)
 
@@ -115,6 +117,7 @@ class EPUBBookLoaderHelper:
                 )
 
         wait_p_list.clear()
+        return result_txt_list
 
 
 url_pattern = r"(http[s]?://|www\.)+(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
