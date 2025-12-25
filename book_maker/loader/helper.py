@@ -85,6 +85,34 @@ class EPUBBookLoaderHelper:
             
         if translation_style != "":
             new_p["style"] = translation_style
+        
+        # Add classes
+        # For new_p (translation)
+        existing_class = new_p.get("class", [])
+        if isinstance(existing_class, str):
+            existing_class = [existing_class]
+        # Ensure it's a list copy to handle BS4 attribute behavior safely
+        existing_class = list(existing_class)
+        
+        if "origin" in existing_class:
+            existing_class.remove("origin")
+        if "translate" not in existing_class:
+            existing_class.append("translate")
+        new_p["class"] = existing_class
+        
+        # For p (original)
+        if isinstance(p, Tag):
+            existing_origin_class = p.get("class", [])
+            if isinstance(existing_origin_class, str):
+                existing_origin_class = [existing_origin_class]
+            # Ensure it's a list copy
+            existing_origin_class = list(existing_origin_class)
+            
+            if "translate" in existing_origin_class:
+                existing_origin_class.remove("translate")
+            if "origin" not in existing_origin_class:
+                existing_origin_class.append("origin")
+            p["class"] = existing_origin_class
             
         p.insert_after(new_p)
         if single_translate:
