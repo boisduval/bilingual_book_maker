@@ -27,6 +27,18 @@ class EPUBBookLoaderHelper:
 
         from bs4 import NavigableString, BeautifulSoup as bs, Tag
         
+        if hasattr(p, "get") and p.get("class"):
+            for cls in p.get("class"):
+                if cls.startswith("toc-heading-"):
+                    from bs4 import BeautifulSoup as bs
+                    clean_text = bs(text, "html.parser").get_text() if text else ""
+                    a_tag = p.find("a")
+                    if a_tag:
+                        a_tag.string = f"{a_tag.text}({clean_text})"
+                    else:
+                        p.string = f"{p.text}({clean_text})"
+                    return
+
         # Helper to safely copy a node to avoid parentage issues
         def safe_copy_node(node):
             if isinstance(node, Tag):

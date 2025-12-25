@@ -205,8 +205,7 @@ class EPUBBookLoader(BaseBookLoader):
         if p.get("class"):
             for cls in p.get("class"):
                 if cls.startswith("toc-heading-"):
-                    # TODO: special handling for toc-heading-*
-                    return False, p_text, new_p
+                    return True, p_text, new_p
 
         return True, p_text, new_p
 
@@ -240,15 +239,32 @@ class EPUBBookLoader(BaseBookLoader):
                 raise RuntimeError(
                     "`t_text` is None: your translation model is not working as expected. Please check your translation model configuration."
                 )
+            
+            # Special handling for toc-heading-*
+            is_toc_heading = False
+            if hasattr(p, "get") and p.get("class"):
+                for cls in p.get("class"):
+                    if cls.startswith("toc-heading-"):
+                        is_toc_heading = True
+                        break
+            
+
             if isinstance(p, NavigableString):
                 # For NavigableString, we can't clear/append, so we handle it here or in insert_trans
                 self.p_to_save.append(t_text)
             else:
                 self.p_to_save.append(t_text)
 
-        self.helper.insert_trans(
-            p, t_text, self.translation_style, self.single_translate
-        )
+        if is_toc_heading:
+            a_tag = p.find("a")
+            if a_tag:
+                a_tag.string = f"{a_tag.text}({t_text})"
+            else:
+                p.string = f"{p.text}({t_text})"
+        else:
+            self.helper.insert_trans(
+                p, t_text, self.translation_style, self.single_translate
+            )
         index += 1
 
         if thread_safe:
